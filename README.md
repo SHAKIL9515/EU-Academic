@@ -6,6 +6,7 @@ It serves as a collection of my learning journey in Computer Science and Enginee
 📘 Purpose
 
 This repository is meant to:
+
 1.Keep a record of the codes I’ve written and learned at Eastern University.
 
 2.Share examples and exercises with other students.
