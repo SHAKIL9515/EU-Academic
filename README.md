@@ -5,7 +5,7 @@ It serves as a collection of my learning journey in Computer Science and Enginee
 
 📘 Purpose
 
-This repository is meant to:
+This repository is mean to:
 
 1.Keep a record of the codes I’ve written and learned at Eastern University.
 
@@ -16,7 +16,7 @@ This repository is meant to:
 🧠 Topics Covered
 C / C++ / Java / Python
 
-1.Object-Oriented Programming (OOP)
+1.Object Oriented Programming (OOP)
 
 2.Data Structures & Algorithms
 
