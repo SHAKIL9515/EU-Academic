@@ -41,7 +41,6 @@ I’m Shakil, a CSE student at Eastern University.
 I created this repository to document what I’ve learned, share knowledge, and grow as a developer.
 
 📫 Contact
-
 If you’re a fellow student or just interested in learning, feel free to connect or collaborate.
 
 Email: shakilhossain9515@gmail.com
