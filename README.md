@@ -1,7 +1,7 @@
 EU Academic 🎓
 
 EU Academic is a personal repository where I upload and organize all the codes and projects I’ve worked on during my studies at Eastern University.
-It serves as a collection of my learning journey in Computer Science and Engineering.Covering topics like programming, algorithms, data structures, databases, object-oriented programming, and more.
+It serves as a collection of my learning journey in Computer Science and Engineering.Covering topics like programming, algorithms, data structures, databases, Object Oriented Programming, and more.
 
 📘 Purpose
 
