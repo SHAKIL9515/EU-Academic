@@ -46,4 +46,6 @@ If you’re a fellow student or just interested in learning, feel free to connec
 
 Email: shakilhossain9515@gmail.com
 
+Email: 241400043@easternuni.edu.bd
+
 GitHub: shakil9515
