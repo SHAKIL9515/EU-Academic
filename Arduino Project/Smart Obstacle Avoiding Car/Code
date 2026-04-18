@@ -1,1 +1,284 @@
+#include <Servo.h>
+#include <AFMotor.h>
 
+// Pins
+#define Echo A0
+#define Trig A1
+#define button A2
+#define servoPin 10
+
+#define obstacleBuzzer 2
+#define reverseBuzzer 4
+#define reverseLED 9
+#define headLight 12   // 💡 headlight
+
+#define spoint 85
+
+String command = "";
+int distance;
+int L = 0, R = 0;
+
+// Modes
+bool isObstacleMode = false;
+bool isBluetoothMode = false;
+
+// Reverse system
+bool reverseActive = false;
+unsigned long lastBlinkTime = 0;
+bool ledState = false;
+
+// Headlight
+bool headLightOn = false;
+
+Servo servo;
+AF_DCMotor M1(1);
+AF_DCMotor M2(2);
+AF_DCMotor M3(3);
+AF_DCMotor M4(4);
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(Trig, OUTPUT);
+  pinMode(Echo, INPUT);
+  pinMode(button, INPUT_PULLUP);
+
+  pinMode(obstacleBuzzer, OUTPUT);
+  pinMode(reverseBuzzer, OUTPUT);
+  pinMode(reverseLED, OUTPUT);
+  pinMode(headLight, OUTPUT);
+
+  digitalWrite(obstacleBuzzer, LOW);
+  digitalWrite(reverseBuzzer, LOW);
+  digitalWrite(reverseLED, LOW);
+  digitalWrite(headLight, LOW);
+
+  servo.attach(servoPin);
+
+  M1.setSpeed(180);
+  M2.setSpeed(180);
+  M3.setSpeed(180);
+  M4.setSpeed(180);
+
+  servo.write(spoint);
+  delay(1000);
+}
+
+// ================= MAIN LOOP =================
+void loop() {
+  checkButton();
+  Bluetoothcontrol();
+
+  // 💡 Headlight control
+  if (headLightOn) {
+    digitalWrite(headLight, HIGH);
+  } else {
+    digitalWrite(headLight, LOW);
+  }
+
+  // 💡 Reverse LED + 🔊 buzzer (3 beep/sec)
+  if (reverseActive) {
+    if (millis() - lastBlinkTime >= 333) {
+      ledState = !ledState;
+      digitalWrite(reverseLED, ledState);
+      digitalWrite(reverseBuzzer, ledState);
+      lastBlinkTime = millis();
+    }
+  } else {
+    digitalWrite(reverseLED, LOW);
+    digitalWrite(reverseBuzzer, LOW);
+  }
+
+  if (isObstacleMode) {
+    Obstacle();
+  } 
+  else if (isBluetoothMode) {
+    digitalWrite(obstacleBuzzer, LOW);
+  } 
+  else {
+    Stop();
+    digitalWrite(obstacleBuzzer, LOW);
+  }
+}
+
+// ================= BUTTON =================
+void checkButton() {
+  if (digitalRead(button) == LOW) {
+    delay(200);
+
+    if (!isObstacleMode && !isBluetoothMode) {
+      isObstacleMode = true;
+    } 
+    else if (isObstacleMode) {
+      isObstacleMode = false;
+      isBluetoothMode = true;
+    } 
+    else {
+      isBluetoothMode = false;
+    }
+
+    Stop();
+    delay(500);
+  }
+}
+
+// ================= OBSTACLE =================
+void Obstacle() {
+  distance = ultrasonic();
+
+  if (distance <= 15) {
+    digitalWrite(obstacleBuzzer, HIGH);
+
+    Stop();
+    backward();
+    delay(300);
+    Stop();
+
+    L = leftsee();
+    delay(200);
+    R = rightsee();
+    delay(200);
+
+    servo.write(spoint);
+    delay(200);
+
+    if (L < R) {
+      right();
+      delay(400);
+    } else {
+      left();
+      delay(400);
+    }
+
+    Stop();
+  } 
+  else {
+    digitalWrite(obstacleBuzzer, LOW);
+    forward();
+  }
+}
+
+// ================= BLUETOOTH =================
+void Bluetoothcontrol() {
+  while (Serial.available()) {
+    char c = Serial.read();
+    command += c;
+    delay(5);
+  }
+
+  if (command.length() > 0) {
+    command.trim();
+    command.toLowerCase();
+
+    if (command == "1") {
+      isObstacleMode = true;
+      isBluetoothMode = false;
+      Stop();
+    }
+
+    else if (command == "2") {
+      isObstacleMode = false;
+      isBluetoothMode = true;
+      Stop();
+    }
+
+    else if (command == "u" || command == "forward" || command == "go") {
+      forward();
+    }
+
+    else if (command == "d" || command == "backward" || command == "back") {
+      backward();
+    }
+
+    else if (command == "l" || command == "left" || command == "turn left") {
+      left();
+    }
+
+    else if (command == "r" || command == "right" || command == "turn right") {
+      right();
+    }
+
+    else if (command == "s" || command == "stop") {
+      Stop();
+    }
+
+    // 💡 HEADLIGHT CONTROL (Channel 2)
+    else if (command == "3") {
+      headLightOn = true;
+    }
+
+    else if (command == "4") {
+      headLightOn = false;
+    }
+
+    command = "";
+  }
+}
+
+// ================= MOTOR =================
+void forward() {
+  reverseActive = false;
+  M1.run(FORWARD);
+  M2.run(FORWARD);
+  M3.run(FORWARD);
+  M4.run(FORWARD);
+}
+
+void backward() {
+  reverseActive = true;
+  M1.run(BACKWARD);
+  M2.run(BACKWARD);
+  M3.run(BACKWARD);
+  M4.run(BACKWARD);
+}
+
+void right() {
+  reverseActive = false;
+  M1.run(FORWARD);
+  M2.run(FORWARD);
+  M3.run(BACKWARD);
+  M4.run(BACKWARD);
+}
+
+void left() {
+  reverseActive = false;
+  M1.run(BACKWARD);
+  M2.run(BACKWARD);
+  M3.run(FORWARD);
+  M4.run(FORWARD);
+}
+
+void Stop() {
+  reverseActive = false;
+  M1.run(RELEASE);
+  M2.run(RELEASE);
+  M3.run(RELEASE);
+  M4.run(RELEASE);
+}
+
+// ================= ULTRASONIC =================
+int ultrasonic() {
+  digitalWrite(Trig, LOW);
+  delayMicroseconds(2);
+  digitalWrite(Trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(Trig, LOW);
+
+  long t = pulseIn(Echo, HIGH, 30000);
+  if (t == 0) return 100;
+
+  return t / 29 / 2;
+}
+
+// ================= SERVO =================
+int rightsee() {
+  servo.write(20);
+  delay(400);
+  return ultrasonic();
+}
+
+int leftsee() {
+  servo.write(160);
+  delay(400);
+  return ultrasonic();
+}
