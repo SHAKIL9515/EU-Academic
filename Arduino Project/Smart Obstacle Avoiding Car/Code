@@ -1,21 +1,41 @@
 #include <Servo.h>
 #include <AFMotor.h>
+#include <ctype.h>
+#include <string.h>
 
-// Pins
-#define Echo A0
-#define Trig A1
+// Front ultrasonic (servo-mounted)
+#define frontEcho A0
+#define frontTrig A1
+
+// Button
 #define button A2
+
+// Rear ultrasonic
+#define rearTrig A4
+#define rearEcho A5
+
+// Servo
 #define servoPin 10
 
+// Outputs
 #define obstacleBuzzer 2
 #define reverseBuzzer 4
 #define reverseLED 9
-#define headLight 12   // 💡 headlight
+#define headLight 12
 
+// Servo positions
 #define spoint 85
+#define rightPoint 20
+#define leftPoint 160
 
-String command = "";
-int distance;
+// Distance thresholds (cm)
+#define frontObstacleDistance 15
+#define rearObstacleDistance 15
+
+char commandBuffer[32];
+byte commandIndex = 0;
+int frontDistance;
+int rearDistance;
 int L = 0, R = 0;
 
 // Modes
@@ -30,17 +50,28 @@ bool ledState = false;
 // Headlight
 bool headLightOn = false;
 
+unsigned long lastButtonPress = 0;
+unsigned long lastManualAlertCheck = 0;
+bool manualCheckFrontNext = true;
+int manualFrontDistance = 100;
+int manualRearDistance = 100;
+
 Servo servo;
 AF_DCMotor M1(1);
 AF_DCMotor M2(2);
 AF_DCMotor M3(3);
 AF_DCMotor M4(4);
 
+void processCommand(char *cmd);
+void updateManualObstacleAlert();
+
 void setup() {
   Serial.begin(9600);
 
-  pinMode(Trig, OUTPUT);
-  pinMode(Echo, INPUT);
+  pinMode(frontTrig, OUTPUT);
+  pinMode(frontEcho, INPUT);
+  pinMode(rearTrig, OUTPUT);
+  pinMode(rearEcho, INPUT);
   pinMode(button, INPUT_PULLUP);
 
   pinMode(obstacleBuzzer, OUTPUT);
@@ -64,19 +95,45 @@ void setup() {
   delay(1000);
 }
 
-// ================= MAIN LOOP =================
 void loop() {
   checkButton();
   Bluetoothcontrol();
+  updateHeadLight();
+  updateReverseAlert();
 
-  // 💡 Headlight control
-  if (headLightOn) {
-    digitalWrite(headLight, HIGH);
+  if (isObstacleMode) {
+    Obstacle();
+  } else if (isBluetoothMode) {
+    updateManualObstacleAlert();
   } else {
-    digitalWrite(headLight, LOW);
+    Stop();
+    digitalWrite(obstacleBuzzer, LOW);
   }
+}
 
-  // 💡 Reverse LED + 🔊 buzzer (3 beep/sec)
+void checkButton() {
+  if (digitalRead(button) == LOW && millis() - lastButtonPress > 250) {
+    lastButtonPress = millis();
+
+    if (!isObstacleMode && !isBluetoothMode) {
+      isObstacleMode = true;
+    } else if (isObstacleMode) {
+      isObstacleMode = false;
+      isBluetoothMode = true;
+      servo.write(spoint);
+    } else {
+      isBluetoothMode = false;
+    }
+
+    Stop();
+  }
+}
+
+void updateHeadLight() {
+  digitalWrite(headLight, headLightOn ? HIGH : LOW);
+}
+
+void updateReverseAlert() {
   if (reverseActive) {
     if (millis() - lastBlinkTime >= 333) {
       ledState = !ledState;
@@ -88,134 +145,79 @@ void loop() {
     digitalWrite(reverseLED, LOW);
     digitalWrite(reverseBuzzer, LOW);
   }
-
-  if (isObstacleMode) {
-    Obstacle();
-  } 
-  else if (isBluetoothMode) {
-    digitalWrite(obstacleBuzzer, LOW);
-  } 
-  else {
-    Stop();
-    digitalWrite(obstacleBuzzer, LOW);
-  }
 }
 
-// ================= BUTTON =================
-void checkButton() {
-  if (digitalRead(button) == LOW) {
-    delay(200);
-
-    if (!isObstacleMode && !isBluetoothMode) {
-      isObstacleMode = true;
-    } 
-    else if (isObstacleMode) {
-      isObstacleMode = false;
-      isBluetoothMode = true;
-    } 
-    else {
-      isBluetoothMode = false;
-    }
-
-    Stop();
-    delay(500);
-  }
-}
-
-// ================= OBSTACLE =================
 void Obstacle() {
-  distance = ultrasonic();
+  frontDistance = frontUltrasonicAt(spoint);
 
-  if (distance <= 15) {
-    digitalWrite(obstacleBuzzer, HIGH);
-
-    Stop();
-    backward();
-    delay(300);
-    Stop();
-
-    L = leftsee();
-    delay(200);
-    R = rightsee();
-    delay(200);
-
-    servo.write(spoint);
-    delay(200);
-
-    if (L < R) {
-      right();
-      delay(400);
-    } else {
-      left();
-      delay(400);
-    }
-
-    Stop();
-  } 
-  else {
+  if (frontDistance > frontObstacleDistance) {
     digitalWrite(obstacleBuzzer, LOW);
     forward();
+    return;
   }
+
+  handleFrontObstacle();
 }
 
-// ================= BLUETOOTH =================
+void handleFrontObstacle() {
+  Stop();
+  digitalWrite(obstacleBuzzer, HIGH);
+  delay(250);
+
+  rearDistance = rearUltrasonic();
+
+  if (rearDistance <= rearObstacleDistance) {
+    servo.write(spoint);
+    Stop();
+    return;
+  }
+
+  backward();
+  delay(300);
+  Stop();
+
+  L = leftsee();
+  delay(200);
+  R = rightsee();
+  delay(200);
+
+  servo.write(spoint);
+  delay(200);
+
+  digitalWrite(obstacleBuzzer, LOW);
+
+  if (L < R) {
+    right();
+    delay(400);
+  } else {
+    left();
+    delay(400);
+  }
+
+  Stop();
+}
+
 void Bluetoothcontrol() {
   while (Serial.available()) {
     char c = Serial.read();
-    command += c;
-    delay(5);
+    if (c == '\n' || c == '\r') {
+      if (commandIndex > 0) {
+        commandBuffer[commandIndex] = '\0';
+        processCommand(commandBuffer);
+        commandIndex = 0;
+      }
+    } else if (commandIndex < sizeof(commandBuffer) - 1) {
+      commandBuffer[commandIndex++] = tolower(c);
+    }
   }
 
-  if (command.length() > 0) {
-    command.trim();
-    command.toLowerCase();
-
-    if (command == "1") {
-      isObstacleMode = true;
-      isBluetoothMode = false;
-      Stop();
-    }
-
-    else if (command == "2") {
-      isObstacleMode = false;
-      isBluetoothMode = true;
-      Stop();
-    }
-
-    else if (command == "u" || command == "forward" || command == "go") {
-      forward();
-    }
-
-    else if (command == "d" || command == "backward" || command == "back") {
-      backward();
-    }
-
-    else if (command == "l" || command == "left" || command == "turn left") {
-      left();
-    }
-
-    else if (command == "r" || command == "right" || command == "turn right") {
-      right();
-    }
-
-    else if (command == "s" || command == "stop") {
-      Stop();
-    }
-
-    // 💡 HEADLIGHT CONTROL (Channel 2)
-    else if (command == "3") {
-      headLightOn = true;
-    }
-
-    else if (command == "4") {
-      headLightOn = false;
-    }
-
-    command = "";
+  if (commandIndex > 0) {
+    commandBuffer[commandIndex] = '\0';
+    processCommand(commandBuffer);
+    commandIndex = 0;
   }
 }
 
-// ================= MOTOR =================
 void forward() {
   reverseActive = false;
   M1.run(FORWARD);
@@ -256,29 +258,82 @@ void Stop() {
   M4.run(RELEASE);
 }
 
-// ================= ULTRASONIC =================
-int ultrasonic() {
-  digitalWrite(Trig, LOW);
+int readUltrasonic(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
-  digitalWrite(Trig, HIGH);
+  digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
-  digitalWrite(Trig, LOW);
+  digitalWrite(trigPin, LOW);
 
-  long t = pulseIn(Echo, HIGH, 30000);
+  long t = pulseIn(echoPin, HIGH, 30000);
   if (t == 0) return 100;
 
   return t / 29 / 2;
 }
 
-// ================= SERVO =================
+int frontUltrasonicAt(int angle) {
+  servo.write(angle);
+  delay(450);
+  return readUltrasonic(frontTrig, frontEcho);
+}
+
+int rearUltrasonic() {
+  return readUltrasonic(rearTrig, rearEcho);
+}
+
 int rightsee() {
-  servo.write(20);
-  delay(400);
-  return ultrasonic();
+  return frontUltrasonicAt(rightPoint);
 }
 
 int leftsee() {
-  servo.write(160);
-  delay(400);
-  return ultrasonic();
+  return frontUltrasonicAt(leftPoint);
+}
+
+void updateManualObstacleAlert() {
+  if (millis() - lastManualAlertCheck >= 120) {
+    lastManualAlertCheck = millis();
+
+    if (manualCheckFrontNext) {
+      servo.write(spoint);
+      delay(70);
+      manualFrontDistance = readUltrasonic(frontTrig, frontEcho);
+    } else {
+      manualRearDistance = rearUltrasonic();
+    }
+
+    manualCheckFrontNext = !manualCheckFrontNext;
+  }
+
+  if (manualFrontDistance <= frontObstacleDistance || manualRearDistance <= rearObstacleDistance) {
+    digitalWrite(obstacleBuzzer, HIGH);
+  } else {
+    digitalWrite(obstacleBuzzer, LOW);
+  }
+}
+
+void processCommand(char *cmd) {
+  if (strcmp(cmd, "1") == 0) {
+    isObstacleMode = true;
+    isBluetoothMode = false;
+    Stop();
+  } else if (strcmp(cmd, "2") == 0) {
+    isObstacleMode = false;
+    isBluetoothMode = true;
+    servo.write(spoint);
+    Stop();
+  } else if (strcmp(cmd, "u") == 0 || strcmp(cmd, "forward") == 0 || strcmp(cmd, "go") == 0) {
+    forward();
+  } else if (strcmp(cmd, "d") == 0 || strcmp(cmd, "backward") == 0 || strcmp(cmd, "back") == 0) {
+    backward();
+  } else if (strcmp(cmd, "l") == 0 || strcmp(cmd, "left") == 0 || strcmp(cmd, "turn left") == 0) {
+    left();
+  } else if (strcmp(cmd, "r") == 0 || strcmp(cmd, "right") == 0 || strcmp(cmd, "turn right") == 0) {
+    right();
+  } else if (strcmp(cmd, "s") == 0 || strcmp(cmd, "stop") == 0) {
+    Stop();
+  } else if (strcmp(cmd, "3") == 0) {
+    headLightOn = true;
+  } else if (strcmp(cmd, "4") == 0) {
+    headLightOn = false;
+  }
 }
